@@ -1539,7 +1539,18 @@ static int iproute_get(int argc, char **argv)
 static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 			   void *arg)
 {
-	int ret;
+	int ret = 0;
+	struct rtattr * tb[RTA_MAX+1];
+	struct rtmsg *r = NLMSG_DATA(n);
+	int len = n->nlmsg_len;
+
+	len -= NLMSG_LENGTH(sizeof(*r));
+	if (len < 0)
+		return -1;
+	parse_rtattr(tb, RTA_MAX, RTM_RTA(r), len);
+
+	if (r->rtm_protocol == RTPROT_UNSPEC)
+		return 0;
 
 	n->nlmsg_flags |= NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
 
