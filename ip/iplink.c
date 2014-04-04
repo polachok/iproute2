@@ -517,6 +517,41 @@ int iplink_parse(int argc, char **argv, struct iplink_req *req,
 	return ret - argc;
 }
 
+struct nlmsghdr *make_request(struct nlmsghdr *n)
+{
+	static struct iplink_req req;
+	struct rtattr * tb[IFLA_MAX+1];
+	struct ifinfomsg *ifi = NLMSG_DATA(n);
+	int len = n->nlmsg_len;
+
+	len -= NLMSG_LENGTH(sizeof(*ifi));
+	parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), len);
+
+	memset(&req, 0, sizeof(req));
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_EXCL| NLM_F_CREATE;
+	req.n.nlmsg_type = RTM_NEWLINK;
+	req.i.ifi_family = preferred_family;
+	req.i.ifi_index = 0;
+
+	if (tb[IFLA_IFNAME]) {
+		struct rtattr *name = tb[IFLA_IFNAME];
+		addattr_l(&req.n, sizeof(req), IFLA_IFNAME, RTA_DATA(name), name->rta_len);
+	}
+
+	if (tb[IFLA_LINK]) {
+		struct rtattr *link = tb[IFLA_LINK];
+		addattr_l(&req.n, sizeof(req), IFLA_LINK, RTA_DATA(link), link->rta_len);
+	}
+
+	if (tb[IFLA_LINKINFO]) {
+		struct rtattr *linkinfo = tb[IFLA_LINKINFO];
+		addattr_l(&req.n, sizeof(req), IFLA_LINKINFO, RTA_DATA(linkinfo), linkinfo->rta_len);
+	}
+	return &req.n;
+}
+
 static int iplink_modify(int cmd, unsigned int flags, int argc, char **argv)
 {
 	int len;
@@ -1021,6 +1056,12 @@ int do_iplink(int argc, char **argv)
 				return do_set(argc-1, argv+1);
 #endif
 		}
+        if (matches(*argv, "save") == 0)
+            return ipaddr_save_link(argc-1, argv+1);
+        if (matches(*argv, "showdump") == 0)
+            return ipaddr_showdump();
+        if (matches(*argv, "restore") == 0)
+            return ipaddr_restore();
 		if (matches(*argv, "show") == 0 ||
 		    matches(*argv, "lst") == 0 ||
 		    matches(*argv, "list") == 0)

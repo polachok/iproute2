@@ -844,6 +844,7 @@ static int store_nlmsg(const struct sockaddr_nl *who, struct nlmsghdr *n,
 }
 
 static __u32 ipadd_dump_magic = 0x47361222;
+static __u32 iplnk_dump_magic = 0x47361333;
 
 static int ipadd_save_prep(void)
 {
@@ -854,7 +855,7 @@ static int ipadd_save_prep(void)
 		return -1;
 	}
 
-	ret = write(STDOUT_FILENO, &ipadd_dump_magic, sizeof(ipadd_dump_magic));
+	ret = write(STDOUT_FILENO, do_link ? &iplnk_dump_magic : &ipadd_dump_magic, sizeof(ipadd_dump_magic));
 	if (ret != sizeof(ipadd_dump_magic)) {
 		fprintf(stderr, "Can't write magic to dump file\n");
 		return -1;
@@ -874,12 +875,15 @@ static int ipadd_dump_check_magic(void)
 	}
 
 	ret = fread(&magic, sizeof(magic), 1, stdin);
-	if (magic != ipadd_dump_magic) {
+	if (magic == ipadd_dump_magic) {
+		return 0;
+	} else if (magic == iplnk_dump_magic) {
+		do_link = 1;
+		return 0;
+	} else {
 		fprintf(stderr, "Magic mismatch (%d elems, %x magic)\n", ret, magic);
 		return -1;
 	}
-
-	return 0;
 }
 
 static int save_nlmsg(const struct sockaddr_nl *who, struct nlmsghdr *n,
@@ -900,12 +904,16 @@ static int show_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, void *
 {
 	struct ifaddrmsg *ifa = NLMSG_DATA(n);
 
-	printf("if%d:\n", ifa->ifa_index);
-	print_addrinfo(NULL, n, stdout);
+	if (do_link) {
+		print_linkinfo(NULL, n, stdout);
+	} else {
+		printf("if%d:\n", ifa->ifa_index);
+		print_addrinfo(NULL, n, stdout);
+	}
 	return 0;
 }
 
-static int ipaddr_showdump(void)
+int ipaddr_showdump(void)
 {
 	if (ipadd_dump_check_magic())
 		exit(-1);
@@ -916,19 +924,24 @@ static int ipaddr_showdump(void)
 static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, void *arg)
 {
 	int ret;
+	struct nlmsghdr *make_request(struct nlmsghdr *n);
 
 	n->nlmsg_flags |= NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
-
 	ll_init_map(&rth);
 
+	if (do_link) {
+		n = make_request(n);
+		n->nlmsg_flags |= NLM_F_ACK;
+	}
+
 	ret = rtnl_talk(&rth, n, 0, 0, n);
-	if ((ret < 0) && (errno == EEXIST))
+	if ((ret < 0) && (errno == EEXIST) )
 		ret = 0;
 
 	return ret;
 }
 
-static int ipaddr_restore(void)
+int ipaddr_restore(void)
 {
 	if (ipadd_dump_check_magic())
 		exit(-1);
@@ -1196,14 +1209,26 @@ static int ipaddr_list_flush_or_save(int argc, char **argv, int action)
 		if (ipadd_save_prep())
 			exit(1);
 
-		if (rtnl_wilddump_request(&rth, preferred_family, RTM_GETADDR) < 0) {
-			perror("Cannot send dump request");
-			exit(1);
-		}
+		if (do_link) {
+			if (rtnl_wilddump_request(&rth, preferred_family, RTM_GETLINK) < 0) {
+				perror("Cannot send dump request");
+				exit(1);
+			}
 
-		if (rtnl_dump_filter(&rth, save_nlmsg, stdout) < 0) {
-			fprintf(stderr, "Save terminated\n");
-			exit(1);
+			if (rtnl_dump_filter(&rth, save_nlmsg, stdout) < 0) {
+				fprintf(stderr, "Dump terminated\n");
+				exit(1);
+			}
+		} else {
+			if (rtnl_wilddump_request(&rth, preferred_family, RTM_GETADDR) < 0) {
+				perror("Cannot send dump request");
+				exit(1);
+			}
+
+			if (rtnl_dump_filter(&rth, save_nlmsg, stdout) < 0) {
+				fprintf(stderr, "Save terminated\n");
+				exit(1);
+			}
 		}
 
 		exit(0);
@@ -1257,6 +1282,13 @@ int ipaddr_list_link(int argc, char **argv)
 	preferred_family = AF_PACKET;
 	do_link = 1;
 	return ipaddr_list_flush_or_save(argc, argv, IPADD_LIST);
+}
+
+int ipaddr_save_link(int argc, char **argv)
+{
+	preferred_family = AF_PACKET;
+	do_link = 1;
+	return ipaddr_list_flush_or_save(argc, argv, IPADD_SAVE);
 }
 
 void ipaddr_reset_filter(int oneline)
