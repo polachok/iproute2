@@ -925,6 +925,8 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, voi
 {
 	int ret;
 	struct nlmsghdr *make_request(struct nlmsghdr *n);
+	struct ifinfomsg *ifi = NLMSG_DATA(n);
+	struct rtattr * tb[IFA_MAX+1];
 
 	n->nlmsg_flags |= NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
 	ll_init_map(&rth);
@@ -932,6 +934,9 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, voi
 	if (do_link) {
 		n = make_request(n);
 		n->nlmsg_flags |= NLM_F_ACK;
+	} else {
+		parse_rtattr(tb, IFA_MAX, IFA_RTA(ifi), n->nlmsg_len - NLMSG_LENGTH(sizeof(struct ifaddrmsg)));
+		ifi->ifi_index = ll_name_to_index(RTA_DATA(tb[IFLA_IFNAME]));
 	}
 
 	ret = rtnl_talk(&rth, n, 0, 0, n);
