@@ -936,7 +936,12 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, voi
 		n->nlmsg_flags |= NLM_F_ACK;
 	} else {
 		parse_rtattr(tb, IFA_MAX, IFA_RTA(ifi), n->nlmsg_len - NLMSG_LENGTH(sizeof(struct ifaddrmsg)));
-		ifi->ifi_index = ll_name_to_index(RTA_DATA(tb[IFLA_IFNAME]));
+        if (tb[IFLA_IFNAME]) {
+            ifi->ifi_index = ll_name_to_index(RTA_DATA(tb[IFLA_IFNAME]));
+        } else {
+            fprintf(stderr, "Warning: interface name not set for idx %d", ifi->ifi_index);
+            return 0;
+        }
 	}
 
 	ret = rtnl_talk(&rth, n, 0, 0, n);
