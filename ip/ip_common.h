@@ -88,3 +88,5 @@ int get_netns_fd(const char *name);
 #ifndef	INFINITY_LIFE_TIME
 #define     INFINITY_LIFE_TIME      0xFFFFFFFFU
 #endif
+
+#define INDEX_TO_NAME_DB "/dev/shm/index_to_name.map"

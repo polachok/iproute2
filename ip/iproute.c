@@ -1551,7 +1551,7 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 	static DB *index_to_ifname = NULL;
 
 	if (!index_to_ifname) {
-		index_to_ifname = dbopen("index_to_name.map", O_RDONLY, 400, DB_HASH, NULL);
+		index_to_ifname = dbopen(INDEX_TO_NAME_DB, O_RDONLY, 400, DB_HASH, NULL);
 	}
 
 	len -= NLMSG_LENGTH(sizeof(*r));
