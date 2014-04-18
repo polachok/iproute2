@@ -933,7 +933,7 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, voi
 	n->nlmsg_flags |= NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
 	ll_init_map(&rth);
 	if (!index_to_ifname) {
-		index_to_ifname = dbopen("index_to_name.map", O_CREAT | O_RDWR, 400, DB_HASH, NULL);
+		index_to_ifname = dbopen(INDEX_TO_NAME_DB, O_CREAT | O_RDWR, 400, DB_HASH, NULL);
 	}
 
 	if (do_link) {
