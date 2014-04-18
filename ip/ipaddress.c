@@ -24,6 +24,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <fnmatch.h>
+#include <db_185.h>
 
 #include <linux/netdevice.h>
 #include <linux/if_arp.h>
@@ -924,24 +925,59 @@ int ipaddr_showdump(void)
 static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, void *arg)
 {
 	int ret;
-	struct nlmsghdr *make_request(struct nlmsghdr *n);
+	struct nlmsghdr  *iplink_make_request(struct nlmsghdr *n);
 	struct ifinfomsg *ifi = NLMSG_DATA(n);
-	struct rtattr * tb[IFA_MAX+1];
+	struct rtattr    *tb[IFA_MAX+1];
+	static DB 	 *index_to_ifname;
 
 	n->nlmsg_flags |= NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
 	ll_init_map(&rth);
+	if (!index_to_ifname) {
+		index_to_ifname = dbopen("index_to_name.map", O_CREAT | O_RDWR, 400, DB_HASH, NULL);
+	}
 
 	if (do_link) {
-		n = make_request(n);
+		n = iplink_make_request(n);
 		n->nlmsg_flags |= NLM_F_ACK;
 	} else {
 		parse_rtattr(tb, IFA_MAX, IFA_RTA(ifi), n->nlmsg_len - NLMSG_LENGTH(sizeof(struct ifaddrmsg)));
-        if (tb[IFLA_IFNAME]) {
-            ifi->ifi_index = ll_name_to_index(RTA_DATA(tb[IFLA_IFNAME]));
-        } else {
-            fprintf(stderr, "Warning: interface name not set for idx %d", ifi->ifi_index);
-            return 0;
-        }
+		char name[IFNAMSIZ+1];
+		DBT key, value;
+		memset(name, 0, sizeof(name));
+		memset(&key, 0, sizeof(key));
+		memset(&value, 0, sizeof(value));
+
+		if (tb[IFLA_IFNAME]) {
+			strcpy(name, rta_getattr_str(tb[IFLA_IFNAME]));
+
+			/* save old index to be able to fix it for packets missing interface name */
+			if (index_to_ifname) {
+				key.data = &ifi->ifi_index;
+				key.size = sizeof(ifi->ifi_index);
+
+				value.data = name;
+				value.size = strlen(name)+1;
+
+				index_to_ifname->put(index_to_ifname, &key, &value, 0);
+				index_to_ifname->sync(index_to_ifname, 0);
+			}
+		} else {
+			/* that's the case */
+			if (index_to_ifname) {
+				key.data = &ifi->ifi_index;
+				key.size = sizeof(ifi->ifi_index);
+
+				if (!index_to_ifname->get(index_to_ifname, &key, &value, 0)) {
+					fprintf(stderr, "Found a name for idx %d, it's %s\n", ifi->ifi_index, (char*)value.data);
+					strncpy(name, value.data, value.size);
+				}
+			}
+		}
+		if (name[0]) {
+			ifi->ifi_index = ll_name_to_index(name);
+		} else {
+			return EINVAL;
+		}
 	}
 
 	ret = rtnl_talk(&rth, n, 0, 0, n);

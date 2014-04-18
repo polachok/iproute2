@@ -517,7 +517,7 @@ int iplink_parse(int argc, char **argv, struct iplink_req *req,
 	return ret - argc;
 }
 
-struct nlmsghdr *make_request(struct nlmsghdr *n)
+struct nlmsghdr *iplink_make_request(struct nlmsghdr *n)
 {
 	static struct iplink_req req;
 	struct rtattr * tb[IFLA_MAX+1];
