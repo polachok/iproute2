@@ -35,7 +35,7 @@ clean:
 SHARED_LIBS ?= y
 ifeq ($(SHARED_LIBS),y)
 
-LDLIBS += -ldl
+LDLIBS += -ldl -ldb
 LDFLAGS += -Wl,-export-dynamic
 
 else

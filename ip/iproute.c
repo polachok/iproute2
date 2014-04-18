@@ -25,6 +25,8 @@
 #include <linux/in_route.h>
 #include <errno.h>
 
+#include <db_185.h>
+
 #include "rt_names.h"
 #include "utils.h"
 #include "ip_common.h"
@@ -116,6 +118,13 @@ static struct
 	inet_prefix rsrc;
 	inet_prefix msrc;
 } filter;
+
+struct iproute_req {
+		struct nlmsghdr		n;
+		struct rtmsg		r;
+		char  			buf[1024];
+};
+
 
 static int flush_update(void)
 {
@@ -707,11 +716,7 @@ static int parse_nexthops(struct nlmsghdr *n, struct rtmsg *r,
 
 static int iproute_modify(int cmd, unsigned flags, int argc, char **argv)
 {
-	struct {
-		struct nlmsghdr	n;
-		struct rtmsg		r;
-		char  			buf[1024];
-	} req;
+	struct iproute_req req;
 	char  mxbuf[256];
 	struct rtattr * mxrta = (void*)mxbuf;
 	unsigned mxlock = 0;
@@ -1540,9 +1545,14 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 			   void *arg)
 {
 	int ret = 0;
-	struct rtattr * tb[RTA_MAX+1];
-	struct rtmsg *r = NLMSG_DATA(n);
+	struct rtattr *tb[RTA_MAX+1];
+	struct rtmsg  *r = NLMSG_DATA(n);
 	int len = n->nlmsg_len;
+	static DB *index_to_ifname = NULL;
+
+	if (!index_to_ifname) {
+		index_to_ifname = dbopen("index_to_name.map", O_RDONLY, 400, DB_HASH, NULL);
+	}
 
 	len -= NLMSG_LENGTH(sizeof(*r));
 	if (len < 0)
@@ -1552,11 +1562,49 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 	if (r->rtm_protocol == RTPROT_UNSPEC)
 		return 0;
 
+	if (tb[RTA_IIF]) {
+		int *iif = (int*)RTA_DATA(tb[RTA_IIF]);
+		if (index_to_ifname) {
+			DBT key, value;
+			memset(&key, 0, sizeof(key));
+			memset(&value, 0, sizeof(value));
+
+			key.data = iif;
+			key.size = sizeof(*iif);
+
+			if (!index_to_ifname->get(index_to_ifname, &key, &value, 0)) {
+				//fprintf(stderr, "Found a name for idx %d, it's %s\n", *iif, (char*)value.data);
+				*iif = ll_name_to_index(value.data);
+			}
+		}
+	}
+
+	if (tb[RTA_OIF]) {
+		int *oif = (int*)RTA_DATA(tb[RTA_OIF]);
+		if (index_to_ifname) {
+			DBT key, value;
+			memset(&key, 0, sizeof(key));
+			memset(&value, 0, sizeof(value));
+
+			key.data = oif;
+			key.size = sizeof(*oif);
+
+			if (!index_to_ifname->get(index_to_ifname, &key, &value, 0)) {
+				//fprintf(stderr, "Found a name for idx %d, it's %s\n", *oif, (char*)value.data);
+				*oif = ll_name_to_index(value.data);
+			}
+		}
+	}
+
 	n->nlmsg_flags |= NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
 
 	ll_init_map(&rth);
 
 	ret = rtnl_talk(&rth, n, 0, 0, n);
+	if (ret < 0) {
+		fprintf(stderr, "RESTORE FAILED FOR ");
+		print_route(nl, n, stderr);
+	}
 	if ((ret < 0) && (errno == EEXIST))
 		ret = 0;
 
