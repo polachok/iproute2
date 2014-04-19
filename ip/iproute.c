@@ -62,7 +62,7 @@ static void usage(void)
 {
 	fprintf(stderr, "Usage: ip route { list | flush } SELECTOR\n");
 	fprintf(stderr, "       ip route save SELECTOR\n");
-	fprintf(stderr, "       ip route restore\n");
+	fprintf(stderr, "       ip route restore map <map_file>\n");
 	fprintf(stderr, "       ip route showdump\n");
 	fprintf(stderr, "       ip route get ADDRESS [ from ADDRESS iif STRING ]\n");
 	fprintf(stderr, "                            [ oif STRING ] [ tos TOS ]\n");
@@ -1548,11 +1548,7 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 	struct rtattr *tb[RTA_MAX+1];
 	struct rtmsg  *r = NLMSG_DATA(n);
 	int len = n->nlmsg_len;
-	static DB *index_to_ifname = NULL;
-
-	if (!index_to_ifname) {
-		index_to_ifname = dbopen(INDEX_TO_NAME_DB, O_RDONLY, 400, DB_HASH, NULL);
-	}
+	DB *map = arg;
 
 	len -= NLMSG_LENGTH(sizeof(*r));
 	if (len < 0)
@@ -1564,7 +1560,7 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 
 	if (tb[RTA_IIF]) {
 		int *iif = (int*)RTA_DATA(tb[RTA_IIF]);
-		if (index_to_ifname) {
+		if (map) {
 			DBT key, value;
 			memset(&key, 0, sizeof(key));
 			memset(&value, 0, sizeof(value));
@@ -1572,8 +1568,8 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 			key.data = iif;
 			key.size = sizeof(*iif);
 
-			if (!index_to_ifname->get(index_to_ifname, &key, &value, 0)) {
-				//fprintf(stderr, "Found a name for idx %d, it's %s\n", *iif, (char*)value.data);
+			if (!map->get(map, &key, &value, 0)) {
+				fprintf(stderr, "Found a name for idx %d, it's %s\n", *iif, (char*)value.data);
 				*iif = ll_name_to_index(value.data);
 			}
 		}
@@ -1581,7 +1577,7 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 
 	if (tb[RTA_OIF]) {
 		int *oif = (int*)RTA_DATA(tb[RTA_OIF]);
-		if (index_to_ifname) {
+		if (map) {
 			DBT key, value;
 			memset(&key, 0, sizeof(key));
 			memset(&value, 0, sizeof(value));
@@ -1589,7 +1585,7 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n,
 			key.data = oif;
 			key.size = sizeof(*oif);
 
-			if (!index_to_ifname->get(index_to_ifname, &key, &value, 0)) {
+			if (!map->get(map, &key, &value, 0)) {
 				//fprintf(stderr, "Found a name for idx %d, it's %s\n", *oif, (char*)value.data);
 				*oif = ll_name_to_index(value.data);
 			}
@@ -1630,12 +1626,27 @@ static int route_dump_check_magic(void)
 	return 0;
 }
 
-static int iproute_restore(void)
+static int iproute_restore(int argc, char **argv)
 {
 	if (route_dump_check_magic())
 		exit(-1);
 
-	exit(rtnl_from_file(stdin, &restore_handler, NULL));
+	char *map_path = NULL;
+	DB *map = NULL;
+
+	NEXT_ARG();
+	if (strcmp(*argv, "map") == 0) {
+		NEXT_ARG();
+		map_path = *argv;
+	}
+	if (map_path != NULL) {
+		map = dbopen(map_path, O_RDONLY, 0400, DB_HASH, NULL);
+		if (!map) {
+			perror("Cannot open map");
+			exit(1);
+		}
+	}
+	exit(rtnl_from_file(stdin, &restore_handler, map));
 }
 
 static int show_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, void *arg)
@@ -1695,7 +1706,7 @@ int do_iproute(int argc, char **argv)
 	if (matches(*argv, "save") == 0)
 		return iproute_list_flush_or_save(argc-1, argv+1, IPROUTE_SAVE);
 	if (matches(*argv, "restore") == 0)
-		return iproute_restore();
+		return iproute_restore(argc, argv);
 	if (matches(*argv, "showdump") == 0)
 		return iproute_showdump();
 	if (matches(*argv, "help") == 0)
