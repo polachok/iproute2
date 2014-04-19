@@ -60,7 +60,6 @@ static struct
 } filter;
 
 static int do_link;
-
 static void usage(void) __attribute__((noreturn));
 
 static void usage(void)
@@ -72,7 +71,7 @@ static void usage(void)
 	fprintf(stderr, "                                                      [ CONFFLAG-LIST ]\n");
 	fprintf(stderr, "       ip addr del IFADDR dev STRING\n");
 	fprintf(stderr, "       ip addr {show|save|flush} [ dev STRING ] [ scope SCOPE-ID ]\n");
-	fprintf(stderr, "                            [ to PREFIX ] [ FLAG-LIST ] [ label PATTERN ] [up]\n");
+	fprintf(stderr, "                            [ to PREFIX ] [ FLAG-LIST ] [ label PATTERN ] [up] [map FILE]\n");
 	fprintf(stderr, "       ip addr {showdump|restore}\n");
 	fprintf(stderr, "IFADDR := PREFIX | ADDR peer PREFIX\n");
 	fprintf(stderr, "          [ broadcast ADDR ] [ anycast ADDR ]\n");
@@ -887,11 +886,66 @@ static int ipadd_dump_check_magic(void)
 	}
 }
 
+static int map_put_name(DB *map, int idx, char *name)
+{
+	DBT key, value;
+
+	if (!map)
+		return 0;
+
+	memset(&key, 0, sizeof(key));
+	memset(&value, 0, sizeof(value));
+
+	key.data = &idx;
+	key.size = sizeof(int);
+
+	value.data = name;
+	value.size = strlen(name)+1;
+
+	map->put(map, &key, &value, 0);
+	map->sync(map, 0);
+	return 1;
+}
+
+static int map_get_name(DB *db, int idx, char *name)
+{
+	DBT key, value;
+
+	if (!db)
+		return 0;
+
+	memset(&key, 0, sizeof(key));
+	memset(&value, 0, sizeof(value));
+
+	key.data = &idx;
+	key.size = sizeof(int);
+
+	if (!db->get(db, &key, &value, 0)) {
+		fprintf(stderr, "Found a name for idx %d, it's %s\n", idx, (char*)value.data);
+		strncpy(name, value.data, IFNAMSIZ);
+		return 1;
+	}
+	return 0;
+}
+
 static int save_nlmsg(const struct sockaddr_nl *who, struct nlmsghdr *n,
 		       void *arg)
 {
 	int ret;
+	struct ifinfomsg *ifi = NLMSG_DATA(n);
+	struct rtattr    *tb[IFA_MAX+1];
+	char name[IFNAMSIZ+1];
+	DB *map = (DB*)arg;
 
+	if (!do_link) {
+		memset(name, 0, sizeof(name));
+		parse_rtattr(tb, IFA_MAX, IFA_RTA(ifi), n->nlmsg_len - NLMSG_LENGTH(sizeof(struct ifaddrmsg)));
+		/* save old index to be able to fix it for packets missing interface name */
+		if (tb[IFLA_IFNAME]) {
+			strncpy(name, rta_getattr_str(tb[IFLA_IFNAME]), IFNAMSIZ);
+			map_put_name(map, ifi->ifi_index, name);
+		}
+	}
 	ret = write(STDOUT_FILENO, n, n->nlmsg_len);
 	if ((ret > 0) && (ret != n->nlmsg_len)) {
 		fprintf(stderr, "Short write while saving nlmsg\n");
@@ -928,56 +982,30 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, voi
 	struct nlmsghdr  *iplink_make_request(struct nlmsghdr *n);
 	struct ifinfomsg *ifi = NLMSG_DATA(n);
 	struct rtattr    *tb[IFA_MAX+1];
-	static DB 	 *index_to_ifname;
+	DB *map;
 
 	n->nlmsg_flags |= NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
 	ll_init_map(&rth);
-	if (!index_to_ifname) {
-		index_to_ifname = dbopen(INDEX_TO_NAME_DB, O_CREAT | O_RDWR, 400, DB_HASH, NULL);
-	}
 
 	if (do_link) {
 		n = iplink_make_request(n);
 		n->nlmsg_flags |= NLM_F_ACK;
 	} else {
-		parse_rtattr(tb, IFA_MAX, IFA_RTA(ifi), n->nlmsg_len - NLMSG_LENGTH(sizeof(struct ifaddrmsg)));
 		char name[IFNAMSIZ+1];
-		DBT key, value;
+		map = (DB*)arg;
+
+		parse_rtattr(tb, IFA_MAX, IFA_RTA(ifi), n->nlmsg_len - NLMSG_LENGTH(sizeof(struct ifaddrmsg)));
 		memset(name, 0, sizeof(name));
-		memset(&key, 0, sizeof(key));
-		memset(&value, 0, sizeof(value));
 
-		if (tb[IFLA_IFNAME]) {
-			strcpy(name, rta_getattr_str(tb[IFLA_IFNAME]));
+		if (tb[IFLA_IFNAME])
+			strncpy(name, rta_getattr_str(tb[IFLA_IFNAME]), IFNAMSIZ);
+		else
+			map_get_name(map, ifi->ifi_index, name);
 
-			/* save old index to be able to fix it for packets missing interface name */
-			if (index_to_ifname) {
-				key.data = &ifi->ifi_index;
-				key.size = sizeof(ifi->ifi_index);
-
-				value.data = name;
-				value.size = strlen(name)+1;
-
-				index_to_ifname->put(index_to_ifname, &key, &value, 0);
-				index_to_ifname->sync(index_to_ifname, 0);
-			}
-		} else {
-			/* that's the case */
-			if (index_to_ifname) {
-				key.data = &ifi->ifi_index;
-				key.size = sizeof(ifi->ifi_index);
-
-				if (!index_to_ifname->get(index_to_ifname, &key, &value, 0)) {
-					fprintf(stderr, "Found a name for idx %d, it's %s\n", ifi->ifi_index, (char*)value.data);
-					strncpy(name, value.data, value.size);
-				}
-			}
-		}
-		if (name[0]) {
+ 		if (name[0])
 			ifi->ifi_index = ll_name_to_index(name);
-		} else {
+		else
 			return EINVAL;
-		}
 	}
 
 	ret = rtnl_talk(&rth, n, 0, 0, n);
@@ -987,12 +1015,29 @@ static int restore_handler(const struct sockaddr_nl *nl, struct nlmsghdr *n, voi
 	return ret;
 }
 
-int ipaddr_restore(void)
+int ipaddr_restore(int argc, char **argv)
 {
 	if (ipadd_dump_check_magic())
 		exit(-1);
 
-	exit(rtnl_from_file(stdin, &restore_handler, NULL));
+	char *map_path = NULL;
+	DB *map = NULL;
+
+	if (!do_link) {
+		if (strcmp(*argv, "map") == 0) {
+			NEXT_ARG();
+			map_path = *argv;
+		}
+		if (map_path != NULL) {
+			map = dbopen(map_path, O_RDONLY, 0400, DB_HASH, NULL);
+			if (!map) {
+				perror("Cannot open map");
+				exit(1);
+			}
+		}
+	}
+
+	exit(rtnl_from_file(stdin, &restore_handler, map));
 }
 
 static void free_nlmsg_chain(struct nlmsg_chain *info)
@@ -1145,6 +1190,7 @@ static int ipaddr_list_flush_or_save(int argc, char **argv, int action)
 	struct nlmsg_chain ainfo = { NULL, NULL};
 	struct nlmsg_list *l;
 	char *filter_dev = NULL;
+	char *map_path  = NULL;
 	int no_link = 0;
 
 	ipaddr_reset_filter(oneline);
@@ -1227,6 +1273,9 @@ static int ipaddr_list_flush_or_save(int argc, char **argv, int action)
 			NEXT_ARG();
 			if (rtnl_group_a2n(&filter.group, *argv))
 				invarg("Invalid \"group\" value\n", *argv);
+		} else if (strcmp(*argv, "map") == 0) {
+			NEXT_ARG();
+			map_path = *argv;
 		} else {
 			if (strcmp(*argv, "dev") == 0) {
 				NEXT_ARG();
@@ -1271,7 +1320,17 @@ static int ipaddr_list_flush_or_save(int argc, char **argv, int action)
 				exit(1);
 			}
 
-			if (rtnl_dump_filter(&rth, save_nlmsg, stdout) < 0) {
+			DB *map = NULL;
+			if (map_path != NULL) {
+				map = dbopen(map_path, O_RDWR | O_CREAT, 0400, DB_HASH, NULL);
+				if (!map) {
+					perror("Cannot open map");
+					exit(1);
+				}
+			} else {
+				fprintf(stderr, "Warning: not saving idx to name map\n");
+			}
+			if (rtnl_dump_filter(&rth, save_nlmsg, map) < 0) {
 				fprintf(stderr, "Save terminated\n");
 				exit(1);
 			}
@@ -1576,7 +1635,7 @@ int do_ipaddr(int argc, char **argv)
 	if (matches(*argv, "showdump") == 0)
 		return ipaddr_showdump();
 	if (matches(*argv, "restore") == 0)
-		return ipaddr_restore();
+		return ipaddr_restore(argc-1, argv+1);
 	if (matches(*argv, "help") == 0)
 		usage();
 	fprintf(stderr, "Command \"%s\" is unknown, try \"ip addr help\".\n", *argv);

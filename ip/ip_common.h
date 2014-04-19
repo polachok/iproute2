@@ -14,7 +14,7 @@ extern int print_ntable(const struct sockaddr_nl *who,
 extern int ipaddr_list(int argc, char **argv);
 extern int ipaddr_list_link(int argc, char **argv);
 extern int ipaddr_save_link(int argc, char **argv);
-extern int ipaddr_restore(void);
+extern int ipaddr_restore(int argc, char **argv);
 extern int ipaddr_showdump(void);
 
 extern int iproute_monitor(int argc, char **argv);
