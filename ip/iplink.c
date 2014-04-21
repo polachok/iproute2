@@ -1061,7 +1061,7 @@ int do_iplink(int argc, char **argv)
         if (matches(*argv, "showdump") == 0)
             return ipaddr_showdump();
         if (matches(*argv, "restore") == 0)
-            return ipaddr_restore();
+            return ipaddr_restore(argc-1, argv+1);
 		if (matches(*argv, "show") == 0 ||
 		    matches(*argv, "lst") == 0 ||
 		    matches(*argv, "list") == 0)
