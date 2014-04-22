@@ -61,7 +61,7 @@ static void usage(void) __attribute__((noreturn));
 static void usage(void)
 {
 	fprintf(stderr, "Usage: ip route { list | flush } SELECTOR\n");
-	fprintf(stderr, "       ip route save SELECTOR\n");
+	fprintf(stderr, "       ip route save map <map_file> SELECTOR\n");
 	fprintf(stderr, "       ip route restore map <map_file>\n");
 	fprintf(stderr, "       ip route showdump\n");
 	fprintf(stderr, "       ip route get ADDRESS [ from ADDRESS iif STRING ]\n");
