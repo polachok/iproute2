@@ -82,6 +82,8 @@ void iplink_usage(void)
 	fprintf(stderr, "			  [ master DEVICE ]\n");
 	fprintf(stderr, "			  [ nomaster ]\n");
 	fprintf(stderr, "       ip link show [ DEVICE | group GROUP ] [up]\n");
+	fprintf(stderr, "       ip link restore [map PATH]\n");
+	fprintf(stderr, "       ip link save\n");
 
 	if (iplink_have_newlink()) {
 		fprintf(stderr, "\n");
